@@ -128,4 +128,14 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-check_point/
+checkpoints/
+combined_res.csv
+model/anomaly_2(preprocess).ipynb
+model/anomaly_3(trim).ipynb
+model/optuna.ipynb
+model/submission.csv
+model/test_c_test_results.npy
+model/test_d_test_results.npy
+postprecess.ipynb
+predictions.dat
+=0.15.0
