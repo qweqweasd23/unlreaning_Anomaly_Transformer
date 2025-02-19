@@ -18,36 +18,23 @@ from scipy.interpolate import interp1d
 #from pytdigest import TDigest
 
 def my_kl_loss(p, q):
-#    # p와 q는 연속형 확률 분포를 나타내는 텐서입니다.
-    p = torch.clamp(p, min=1e-10)  # p가 0이 되는 것을 방지
-    q = torch.clamp(q, min=1e-10)  # q가 0이 되는 것을 방지
+
+    p = torch.clamp(p, min=1e-10)  
+    q = torch.clamp(q, min=1e-10)  
     res = p * (torch.log(p) - torch.log(q))
     return torch.mean(torch.sum(res, dim=-1))
 #
 def bhattacharyya_distance(p, q, eps=1e-10):
-    """
-    p, q: 마지막 차원이 확률분포(합이 1이 되도록 정규화된 텐서)
-    eps: 수치 안정성을 위한 작은 값
-    반환: 각 배치 혹은 샘플별 Bhattacharyya Distance (스칼라 값)
-    """
-    # 각 요소의 제곱근을 취한 후, 마지막 차원에서 합산
+
     bc = torch.sum(torch.sqrt(p * q + eps), dim=-1)
-    # Bhattacharyya Distance 계산
     bd = -torch.log(bc + eps)
     return bd
 
 def reconstruct_from_windows_memmap(prediction, total_row, win_size, output_path):
     """
-    슬라이딩 윈도우 기반 prediction 데이터를 복구(reconstruct)합니다.
-    중복된 위치에서 앞 또는 뒤 값이 1인 경우 1로 설정하며, 결과를 memmap으로 저장합니다.
+    슬라이딩 윈도우 기법을 통해 줄어든 prediction의 data_len을 복구
+    중복 위치 중 하나가 1 이라면 1을 반환
 
-    Args:
-        prediction (np.ndarray): Shape (len, win, feat)의 prediction 데이터.
-        win_size (int): 슬라이딩 윈도우 크기.
-        output_path (str): 복구된 데이터를 저장할 memmap 파일 경로.
-
-    Returns:
-        np.memmap: 복구된 prediction 데이터. Shape (len + win_size - 1, feat).
     """
     len_full, win, feat = prediction.shape
     reconstructed_shape = (len_full + win_size - 1, feat)
@@ -55,12 +42,10 @@ def reconstruct_from_windows_memmap(prediction, total_row, win_size, output_path
     # Memmap 파일 생성
     reconstructed_memmap = np.memmap(output_path, dtype='float32', mode='w+', shape=reconstructed_shape)
     count_memmap = np.memmap(output_path + "_count", dtype='int32', mode='w+', shape=reconstructed_shape)
-
-    # 초기화
     reconstructed_memmap[:] = 0
     count_memmap[:] = 0
 
-    # 슬라이딩 윈도우를 통해 복구   여가기에 tqdm 추가 , 지금 매우 병목인듯 
+    # 슬라이딩 윈도우를 통해 복구 
     for t in tqdm(range(len_full),desc='reconsturct'):
         start_idx = t
         end_idx = t + win_size
@@ -75,9 +60,8 @@ def reconstruct_from_windows_memmap(prediction, total_row, win_size, output_path
 
     # Memmap 플러시 및 반환
     reconstructed_memmap.flush()
-    #count_memmap.flush()
 
-    # Count memmap 파일 삭제 (필요 없으므로)
+    # Count memmap 파일 삭제 
     del count_memmap
 
     return reconstructed_memmap
@@ -88,15 +72,8 @@ def aggregate_anomalies(
     prediction, aggregate_unit, min_length
 ):
     """
-    Aggregate anomalies based on prediction, aggregation unit, and minimum anomaly length.
-    
-    Args:
-        prediction (np.ndarray): Binary anomaly predictions of shape (data_len, feat_num).
-        aggregate_unit (int): Number of time steps to aggregate into one result.
-        min_length (int): Minimum length of continuous anomalies to be considered as anomaly.
-        
-    Returns:
-        np.ndarray: Aggregated anomaly results of shape (num_aggregates, feat_num).
+    복구된 prediction을 aggregate_unit 단위로 집계
+    min_length를 기준으로 이상판정 연속성을 확인인
     """
     # Extract data shape
     data_len, feat_num = prediction.shape
@@ -135,17 +112,7 @@ def process_batches(test_scores_path, prediction_path, threshold_path,
                     num_batches, batch_size, win_size, target_columns,
                     zscore_threshold,total_samples):
     """
-    배치 단위로 threshold와 prediction을 계산하여 메모리 사용량을 줄이는 함수.
-
-    Args:
-        test_scores_path (str): Test scores memmap 경로.
-        prediction_path (str): Prediction 결과 저장 경로.
-        threshold_path (str): Threshold 결과 저장 경로.
-        num_batches (int): 총 배치 수.
-        batch_size (int): 배치 크기.
-        win_size (int): 슬라이딩 윈도우 크기.
-        target_columns (list): Feature 칼럼 리스트.
-        zscore_threshold (float): Z-score 임계값.
+    test_score를 입력받아 배치단위로 zscore_thres 생성, 이상판정
     """
     # Test scores memmap 로드
     test_scores_memmap = np.memmap(test_scores_path, dtype='float32', mode='r',
@@ -220,7 +187,7 @@ class EarlyStopping:
             self.best_score = score
             self.best_score2 = score2
             self.save_checkpoint(val_loss, val_loss2, model, path)
-        # 비교 로직 (부호에 따라 동작 조정)
+        # 비교 로직 
         elif score < self.best_score + self.delta or score2 < self.best_score2 + self.delta:
             self.counter += 1
             print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
@@ -235,7 +202,7 @@ class EarlyStopping:
     def save_checkpoint(self, val_loss, val_loss2, model, path):
         if self.verbose:
             print(f'Validation loss decreased ({self.val_loss_min:.6f} --> {val_loss:.6f}).  Saving model ...')
-        #model.cpu() 
+        
         torch.save(model.state_dict(), os.path.join(path, f'{str(self.dataset)}_{str(self.study_name)}_checkpoint.pth'))
         self.val_loss_min = val_loss
         self.val_loss2_min = val_loss2
@@ -284,11 +251,11 @@ class Solver(object):
         loss_1 = []
         loss_2 = []
 
-        for input_data in vali_loader:  # 레이블 제거
+        for input_data in vali_loader: 
             input = input_data.float().to(self.device)
             output, series, prior, _ = self.model(input)
 
-            # Association discrepancy 계산
+            # ass - dis 
             series_loss = 0.0
             prior_loss = 0.0
             for u in range(len(prior)):
@@ -331,14 +298,14 @@ class Solver(object):
             
             self.model.train()
 
-            for input_data in self.train_loader:  # 레이블 제거
+            for input_data in self.train_loader:  
                 input = input_data.float().to(self.device)
 
                 self.optimizer.zero_grad()
 
                 output, series, prior, _ = self.model(input)
 
-                # Association discrepancy 계산
+                # ass- dis 
                 series_loss = 0.0
                 prior_loss = 0.0
                 for u in range(len(prior)):
