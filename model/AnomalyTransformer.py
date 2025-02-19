@@ -4,8 +4,6 @@ import torch.nn.functional as F
 
 from .attn import AnomalyAttention, AttentionLayer
 from .embed import DataEmbedding, TokenEmbedding
-
-
 class EncoderLayer(nn.Module):
     def __init__(self, attention, d_model, d_ff=None, dropout=0.1, activation="relu"):
         super(EncoderLayer, self).__init__()
@@ -18,10 +16,11 @@ class EncoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.activation = F.relu if activation == "relu" else F.gelu
 
-    def forward(self, x, attn_mask=None):
+    def forward(self, x, attn_mask=None,pad_mask=None):
         new_x, attn, mask, sigma = self.attention(
             x, x, x,
-            attn_mask=attn_mask
+            attn_mask=attn_mask,
+            pad_mask=pad_mask
         )
         x = x + self.dropout(new_x)
         y = x = self.norm1(x)
@@ -37,13 +36,13 @@ class Encoder(nn.Module):
         self.attn_layers = nn.ModuleList(attn_layers)
         self.norm = norm_layer
 
-    def forward(self, x, attn_mask=None):
+    def forward(self, x, attn_mask=None,pad_mask=None):
         # x [B, L, D]
         series_list = []
         prior_list = []
         sigma_list = []
         for attn_layer in self.attn_layers:
-            x, series, prior, sigma = attn_layer(x, attn_mask=attn_mask)
+            x, series, prior, sigma = attn_layer(x, attn_mask=attn_mask,pad_mask=pad_mask)
             series_list.append(series)
             prior_list.append(prior)
             sigma_list.append(sigma)
@@ -59,7 +58,7 @@ class AnomalyTransformer(nn.Module):
                  dropout=0.0, activation='gelu', output_attention=True):
         super(AnomalyTransformer, self).__init__()
         self.output_attention = output_attention
-
+        dropout=dropout
         # Encoding
         self.embedding = DataEmbedding(enc_in, d_model, dropout)
 
@@ -81,9 +80,10 @@ class AnomalyTransformer(nn.Module):
 
         self.projection = nn.Linear(d_model, c_out, bias=True)
 
-    def forward(self, x):
+    def forward(self, x,pad_mask=None):
         enc_out = self.embedding(x)
-        enc_out, series, prior, sigmas = self.encoder(enc_out)
+        #print(f'x : {x.shape},enc_out : {enc_out.shape}')
+        enc_out, series, prior, sigmas = self.encoder(enc_out,pad_mask=pad_mask)
         enc_out = self.projection(enc_out)
 
         if self.output_attention:

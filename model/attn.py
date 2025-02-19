@@ -16,7 +16,16 @@ class TriangularCausalMask():
     @property
     def mask(self):
         return self._mask
+def verify_pad_mask(pad_mask, scores, expanded_pad_mask):
+            intended_mask_positions = (expanded_pad_mask == 0).nonzero(as_tuple=True)
+            masked_scores = scores[intended_mask_positions]
+            are_correctly_masked = torch.all(masked_scores == -np.inf)
 
+            non_masked_positions = (expanded_pad_mask == 1).nonzero(as_tuple=True)
+            non_masked_scores = scores[non_masked_positions]
+            are_non_padded_correctly = torch.all(non_masked_scores != -np.inf)
+
+            return are_correctly_masked.item(), are_non_padded_correctly.item()
 
 class AnomalyAttention(nn.Module):
     def __init__(self, win_size, mask_flag=True, scale=None, attention_dropout=0.0, output_attention=False):
@@ -26,12 +35,13 @@ class AnomalyAttention(nn.Module):
         self.output_attention = output_attention
         self.dropout = nn.Dropout(attention_dropout)
         window_size = win_size
+        # 디스턴스 가중치 
         self.distances = torch.zeros((window_size, window_size)).cuda()
         for i in range(window_size):
             for j in range(window_size):
                 self.distances[i][j] = abs(i - j)
-
-    def forward(self, queries, keys, values, sigma, attn_mask):
+        self.distances = self.distances * 2
+    def forward(self, queries, keys, values, sigma, attn_mask, pad_mask=None):
         B, L, H, E = queries.shape
         _, S, _, D = values.shape
         scale = self.scale or 1. / sqrt(E)
@@ -41,19 +51,31 @@ class AnomalyAttention(nn.Module):
             if attn_mask is None:
                 attn_mask = TriangularCausalMask(B, L, device=queries.device)
             scores.masked_fill_(attn_mask.mask, -np.inf)
+        if pad_mask is not None:
+            expanded_pad_mask = pad_mask.unsqueeze(1).unsqueeze(2).expand(scores.shape)
+
+            scores.masked_fill_(expanded_pad_mask == 0, -np.inf)
+        # 패딩 마스킹 디버그
+        # Check if pad_mask is correctly applied to the intended positions
+ 
+        #correctly_masked, non_padded_correctly = verify_pad_mask(pad_mask, scores, expanded_pad_mask)
+        #print("Pad mask applied correctly to masked positions:", correctly_masked)
+        #print("Pad mask did not affect non-masked positions:", non_padded_correctly)
         attn = scale * scores
 
         sigma = sigma.transpose(1, 2)  # B L H ->  B H L
         window_size = attn.shape[-1]
-        sigma = torch.sigmoid(sigma * 5) + 1e-5
-        sigma = torch.pow(3, sigma) - 1
+        # 개선 코드
+        sigma = torch.sigmoid(sigma * 7) + 1e-3  # 더 강한 그래디언트
+        sigma = torch.pow(5, sigma) - 1           # 출력 범위 확대
         sigma = sigma.unsqueeze(-1).repeat(1, 1, 1, window_size)  # B H L L
         prior = self.distances.unsqueeze(0).unsqueeze(0).repeat(sigma.shape[0], sigma.shape[1], 1, 1).cuda()
-        prior = 1.0 / (math.sqrt(2 * math.pi) * sigma) * torch.exp(-prior ** 2 / 2 / (sigma ** 2))
-
+        denom = math.sqrt(2 * math.pi) * sigma
+        prior = 1.0 / denom * torch.exp(-prior ** 2 / 2 / (sigma ** 2))
+        
         series = self.dropout(torch.softmax(attn, dim=-1))
         V = torch.einsum("bhls,bshd->blhd", series, values)
-
+        
         if self.output_attention:
             return (V.contiguous(), series, prior, sigma)
         else:
@@ -81,12 +103,15 @@ class AttentionLayer(nn.Module):
 
         self.n_heads = n_heads
 
-    def forward(self, queries, keys, values, attn_mask):
+    def forward(self, queries, keys, values, attn_mask,pad_mask=None):
         B, L, _ = queries.shape
         _, S, _ = keys.shape
         H = self.n_heads
         x = queries
+        #print(f'querise : {queries.shape}, keys : {keys.shape}, valuse : {values.shape},  head : {H}')
+        
         queries = self.query_projection(queries).view(B, L, H, -1)
+        #print(f"queries shape after projection: {queries.shape}")
         keys = self.key_projection(keys).view(B, S, H, -1)
         values = self.value_projection(values).view(B, S, H, -1)
         sigma = self.sigma_projection(x).view(B, L, H)
@@ -96,7 +121,8 @@ class AttentionLayer(nn.Module):
             keys,
             values,
             sigma,
-            attn_mask
+            attn_mask,
+            pad_mask=pad_mask
         )
         out = out.view(B, L, -1)
 
