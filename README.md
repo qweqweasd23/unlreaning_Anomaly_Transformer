@@ -1,3 +1,8 @@
+===============================================================================
+# 🚧 Work in Progress  
+This is a WIP (Work in Progress) version of a customized Anomaly-Transformer.  
+===============================================================================
+
 # Anomaly-Transformer (ICLR 2022 Spotlight)
 Anomaly Transformer: Time Series Anomaly Detection with Association Discrepancy
 
